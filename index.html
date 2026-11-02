@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Railway Megaprojects — Static World Map Atlas</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- D3 & TopoJSON for crisp, API-key-free vector continents (with instant inline SVG fallback) -->
+    <script src="https://cdn.jsdelivr.net/npm/d3-array@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+
+    <style>
+        /* Pulse animations for pins */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.9; }
+            80%, 100% { transform: scale(2.5); opacity: 0; }
+        }
+        .pulse-ring {
+            transform-origin: center;
+            transform-box: fill-box;
+            animation: pulse-ring 2.2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        .pulse-ring-fast {
+            transform-origin: center;
+            transform-box: fill-box;
+            animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+
+        /* Map styling transitions */
+        .land-path {
+            transition: fill 0.25s ease, stroke 0.25s ease;
+        }
+        .dark .land-path {
+            fill: #1e293b;
+            stroke: #334155;
+        }
+        html:not(.dark) .land-path {
+            fill: #e2e8f0;
+            stroke: #94a3b8;
+        }
+        .dark .graticule-line {
+            stroke: rgba(148, 163, 184, 0.08);
+        }
+        html:not(.dark) .graticule-line {
+            stroke: rgba(15, 23, 42, 0.07);
+        }
+        .dark .equator-line {
+            stroke: rgba(56, 189, 248, 0.2);
+        }
+        html:not(.dark) .equator-line {
+            stroke: rgba(2, 132, 199, 0.22);
+        }
+
+        /* Pin node hover states */
+        .pin-group {
+            cursor: pointer;
+        }
+        .pin-badge {
+            transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+            transform-origin: center;
+            transform-box: fill-box;
+        }
+        .pin-group:hover .pin-badge {
+            transform: scale(1.22);
+        }
+    </style>
+</head>
+<body class="bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased min-h-screen flex flex-col selection:bg-emerald-500 selection:text-white">
+
+    <!-- TOP BAR -->
+    <header class="w-full bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3 z-30">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 font-mono font-bold text-xs">
+                HSR
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <h1 class="text-sm sm:text-base font-bold tracking-tight text-slate-900 dark:text-white">
+                        Global High-Speed & Megaproject Railway Atlas
+                    </h1>
+                    <span class="hidden md:inline-block text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                        Static Equirectangular Projection • 24 Corridors
+                    </span>
+                </div>
+                <p class="text-[11px] text-slate-500 dark:text-slate-400">
+                    Hover any pin bubble for corridor metrics • <span class="text-emerald-600 dark:text-emerald-400 font-medium">Click any pin or label to open its Wikipedia article ↗</span>
+                </p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- Filter Pills -->
+            <div class="hidden xl:flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs">
+                <button data-filter="all" class="filter-pill px-2.5 py-1 rounded-md font-medium bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm transition">
+                    All (24)
+                </button>
+                <button data-filter="operational" class="filter-pill px-2.5 py-1 rounded-md font-medium text-emerald-600 dark:text-emerald-400 hover:bg-white/50 dark:hover:bg-slate-900/50 transition flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>Operational (6)
+                </button>
+                <button data-filter="construction" class="filter-pill px-2.5 py-1 rounded-md font-medium text-amber-600 dark:text-amber-400 hover:bg-white/50 dark:hover:bg-slate-900/50 transition flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-yellow-400"></span>Under Construction (14)
+                </button>
+                <button data-filter="contracted" class="filter-pill px-2.5 py-1 rounded-md font-medium text-slate-700 dark:text-slate-200 hover:bg-white/50 dark:hover:bg-slate-900/50 transition flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-white border border-slate-400"></span>Contracted / Approved (4)
+                </button>
+            </div>
+
+            <!-- Copy Citation Button -->
+            <button id="btn-open-cite" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm flex items-center gap-1.5 transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                </svg>
+                <span>Copy Compact Citation</span>
+            </button>
+
+            <!-- Light/Dark Mode Toggle -->
+            <button id="btn-theme" title="Switch between Dark Engineering Mode & Academic Print Light Mode" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition">
+                <svg class="w-3.5 h-3.5 hidden dark:inline text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                </svg>
+                <svg class="w-3.5 h-3.5 inline dark:hidden text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+                </svg>
+                <span id="theme-label">Print Light</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- MAIN STATIC WORLD MAP CANVAS ("MAP MONDE") -->
+    <main class="flex-1 flex flex-col items-center justify-center p-2 sm:p-4 lg:p-6 relative overflow-hidden">
+        
+        <div id="map-wrapper" class="relative w-full max-w-[1440px] aspect-[2/1] rounded-2xl overflow-hidden shadow-2xl border border-slate-300 dark:border-slate-800 bg-sky-50/70 dark:bg-[#070d19] transition-colors duration-300">
+            
+            <!-- Locked Static Equirectangular SVG Map (1200 x 600 coordinate space) -->
+            <svg id="world-svg" viewBox="0 0 1200 600" class="w-full h-full select-none block">
+                <defs>
+                    <!-- Subtle radial ocean glow -->
+                    <radialGradient id="oceanGlowDark" cx="50%" cy="45%" r="65%">
+                        <stop offset="0%" stop-color="#0f1e36" />
+                        <stop offset="100%" stop-color="#060b14" />
+                    </radialGradient>
+                    <radialGradient id="oceanGlowLight" cx="50%" cy="45%" r="65%">
+                        <stop offset="0%" stop-color="#f0f9ff" />
+                        <stop offset="100%" stop-color="#e0f2fe" />
+                    </radialGradient>
+                    <!-- Drop shadow for callout pills -->
+                    <filter id="pillShadow" x="-15%" y="-15%" width="130%" height="130%">
+                        <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000000" flood-opacity="0.45"/>
+                    </filter>
+                </defs>
+
+                <!-- Ocean Backdrop -->
+                <rect id="ocean-rect" width="1200" height="600" fill="url(#oceanGlowDark)" />
+
+                <!-- Graticule Grid Layer (Latitude / Longitude lines) -->
+                <g id="graticule-layer"></g>
+
+                <!-- Continents & Countries Vector Layer (Zero API Keys!) -->
+                <g id="continents-layer"></g>
+
+                <!-- Leader Lines for Clustered Pins -->
+                <g id="leaders-layer"></g>
+
+                <!-- Geographic Coordinate Dots -->
+                <g id="dots-layer"></g>
+
+                <!-- Interactive Callout Pin Bubbles -->
+                <g id="labels-layer"></g>
+            </svg>
+
+            <!-- Floating Legend Bottom-Left Inside Map -->
+            <div class="hidden sm:flex flex-wrap items-center gap-4 absolute bottom-3 left-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-[11px] shadow-lg">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-red-500 ring-2 ring-amber-400"></span>
+                    <span class="font-semibold text-slate-800 dark:text-slate-100">★ Thesis Case Study (Echizen-Takefu)</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                    <span class="text-slate-600 dark:text-slate-300">Operational / Active</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-yellow-400"></span>
+                    <span class="text-slate-600 dark:text-slate-300">Under Construction</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-white border-2 border-slate-600 dark:border-slate-300"></span>
+                    <span class="text-slate-600 dark:text-slate-300">Contracted / Approved</span>
+                </div>
+            </div>
+
+            <!-- Hover Floating Pin Bubble Tooltip -->
+            <div id="hover-tooltip" class="pointer-events-none fixed z-50 hidden w-80 rounded-xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 p-3.5 shadow-2xl transition-opacity duration-150">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                    <span id="tt-country" class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"></span>
+                    <span id="tt-status" class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded"></span>
+                </div>
+                <h3 id="tt-title" class="text-xs font-bold text-slate-900 dark:text-white leading-snug mt-1"></h3>
+                <div id="tt-scale" class="text-[11px] font-mono text-amber-600 dark:text-amber-400 mt-0.5"></div>
+                <p id="tt-desc" class="text-[11px] text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed"></p>
+                <div class="mt-2.5 pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    <span>Click pin to open Wikipedia</span>
+                    <span id="tt-coords" class="font-mono text-[10px] text-slate-400"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- COMPACT CLICKABLE DIRECTORY BAR BELOW MAP -->
+        <section class="w-full max-w-[1440px] mt-3">
+            <div class="flex items-center justify-between mb-1.5 px-1">
+                <span class="text-[11px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Direct Wikipedia Index (Click any badge to open article in new tab)
+                </span>
+                <span id="active-status" class="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
+                    Showing all 24 verified railway megaprojects across 6 continents
+                </span>
+            </div>
+            <div id="badge-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5">
+                <!-- Populated dynamically -->
+            </div>
+        </section>
+    </main>
+
+    <!-- CITATION MODAL -->
+    <div id="cite-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                <div>
+                    <h2 class="text-sm sm:text-base font-bold text-slate-900 dark:text-white">Compact Literature Review Reference</h2>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Replace long parenthetical project lists in your GPSS Research Plan</p>
+                </div>
+                <button id="btn-close-cite" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
+                    ✕
+                </button>
+            </div>
+
+            <div class="mt-4 space-y-3">
+                <div>
+                    <label class="block text-[11px] font-mono uppercase text-slate-500 dark:text-slate-400 mb-1">
+                        Streamlined Academic Sentence (46 Words • All 6 Inhabited Continents)
+                    </label>
+                    <div id="cite-prose" class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-800 dark:text-slate-200 leading-relaxed select-all">
+                        Contemporary rail megaprojects span all six inhabited continents, including the Americas (Tren Maya, California HSR, Canada’s Alto, Bogotá Metro, Santiago EFE, São Paulo TIC), EMEA (Grand Paris Express, HS2, Rail Baltica, Al Boraq, Egypt HSR, Tanzania and Nigeria SGR, Gulf and Turkish HSR), Asia-Pacific (India, Thailand, Vietnam, Whoosh, China, Japan’s Chūō Maglev and Hokuriku Shinkansen), and Australia (Inland Rail, Melbourne SRL).
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-[11px] font-mono uppercase text-slate-500 dark:text-slate-400 mb-1">
+                        Markdown Wikipedia Reference List
+                    </label>
+                    <textarea id="cite-markdown" readonly rows="6" class="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-700 dark:text-slate-300 focus:outline-none select-all"></textarea>
+                </div>
+            </div>
+
+            <div class="mt-4 flex items-center justify-end gap-2">
+                <span id="copy-toast" class="text-xs font-medium text-emerald-500 hidden mr-2">Copied to clipboard!</span>
+                <button id="btn-copy-prose" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 transition">
+                    Copy Sentence
+                </button>
+                <button id="btn-copy-md" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition">
+                    Copy Markdown Links
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================================
+        // 1. VERIFIED GLOBAL RAILWAY MEGAPROJECTS DATASET (24 CORRIDORS ACROSS 6 CONTINENTS)
+        //    Status codes:
+        //    - "operational"  -> Green (#10b981)
+        //    - "construction" -> Yellow (#eab308)
+        //    - "contracted"   -> White (#ffffff / #f8fafc)
+        //    - isThesis: true -> Pulsing Crimson Star (#ef4444) + included in Operational
+        // ============================================================================
+        const PROJECTS = [
+            // --- NORTH & CENTRAL AMERICA ---
+            {
+                id: "canada",
+                shortLabel: "Canada Alto HFR",
+                name: "Alto High Frequency Rail (Toronto–Quebec City Corridor)",
+                country: "Canada",
+                lat: 45.42,
+                lon: -75.69,
+                status: "contracted",
+                scale: "~1,000 km • Dedicated Passenger Corridor",
+                desc: "Contracted Cadence consortium project developing electrified intercity rail across the Quebec–Windsor urban belt.",
+                url: "https://en.wikipedia.org/wiki/High_Frequency_Rail",
+                dx: 52,
+                dy: -18
+            },
+            {
+                id: "usa",
+                shortLabel: "California HSR",
+                name: "California High-Speed Rail (Phase 1 Merced–Bakersfield)",
+                country: "United States",
+                lat: 36.74,
+                lon: -119.78,
+                status: "construction",
+                scale: "800+ km (Phase 1) • 350 km/h",
+                desc: "Envision-certified high-speed corridor under active civil construction in the Central Valley.",
+                url: "https://en.wikipedia.org/wiki/California_High-Speed_Rail",
+                dx: -62,
+                dy: -12
+            },
+            {
+                id: "mexico",
+                shortLabel: "Tren Maya",
+                name: "Tren Maya Intercity Railway",
+                country: "Mexico",
+                lat: 20.62,
+                lon: -88.57,
+                status: "operational",
+                scale: "1,554 km • 160 km/h",
+                desc: "Inaugurated Yucatán Peninsula passenger and freight railway loop across five southeastern Mexican states.",
+                url: "https://en.wikipedia.org/wiki/Tren_Maya",
+                dx: -54,
+                dy: 16
+            },
+
+            // --- SOUTH AMERICA ---
+            {
+                id: "colombia",
+                shortLabel: "Bogotá Metro & RegioTram",
+                name: "RegioTram de Occidente & Bogotá Metro Line 1",
+                country: "Colombia",
+                lat: 4.71,
+                lon: -74.07,
+                status: "construction",
+                scale: "39.6 km RegioTram + 24 km Elevated viaduct",
+                desc: "Suburban light-rail commuter corridor and high-capacity elevated metro under active construction across the Bogotá Sabana.",
+                url: "https://en.wikipedia.org/wiki/Bogot%C3%A1_Metro",
+                dx: -70,
+                dy: -6
+            },
+            {
+                id: "brazil",
+                shortLabel: "São Paulo TIC Rail",
+                name: "São Paulo Intercity Rail (TIC Eixo Norte)",
+                country: "Brazil",
+                lat: -23.55,
+                lon: -46.63,
+                status: "contracted",
+                scale: "101 km (São Paulo–Campinas) • 140 km/h",
+                desc: "Concession auction awarded in 2024 for Brazil's flagship express regional passenger rail corridor.",
+                url: "https://en.wikipedia.org/wiki/Intercity_Train_(S%C3%A3o_Paulo)",
+                dx: 58,
+                dy: -8
+            },
+            {
+                id: "chile",
+                shortLabel: "Santiago–Melipilla EFE",
+                name: "Melipilla–Santiago & Batuco Commuter Rail (EFE)",
+                country: "Chile",
+                lat: -33.45,
+                lon: -70.66,
+                status: "construction",
+                scale: "61 km • Electrified Regional Corridor",
+                desc: "Major Chilean state railway (EFE) metropolitan expansion under construction connecting western and northern suburbs.",
+                url: "https://en.wikipedia.org/wiki/Tren_Estaci%C3%B3n_Central-Melipilla",
+                dx: -66,
+                dy: 14
+            },
+
+            // --- EUROPE ---
+            {
+                id: "uk",
+                shortLabel: "UK HS2",
+                name: "High Speed 2 (HS2 Phase 1 London–Birmingham)",
+                country: "United Kingdom",
+                lat: 52.48,
+                lon: -1.89,
+                status: "construction",
+                scale: "225 km • 360 km/h",
+                desc: "Flagship BREEAM Infrastructure-audited high-speed line with intensive viaduct and tunneling works underway.",
+                url: "https://en.wikipedia.org/wiki/High_Speed_2",
+                dx: -54,
+                dy: -24
+            },
+            {
+                id: "france",
+                shortLabel: "Grand Paris Express",
+                name: "Grand Paris Express Orbital Metro",
+                country: "France",
+                lat: 48.85,
+                lon: 2.35,
+                status: "construction",
+                scale: "200 km (4 Automated Lines) • 68 Stations",
+                desc: "Europe's largest green-bond-financed automated orbital transit and TOD megaproject.",
+                url: "https://en.wikipedia.org/wiki/Grand_Paris_Express",
+                dx: -68,
+                dy: 0
+            },
+            {
+                id: "baltic",
+                shortLabel: "Rail Baltica",
+                name: "Rail Baltica Standard-Gauge Corridor",
+                country: "Estonia • Latvia • Lithuania",
+                lat: 56.95,
+                lon: 24.10,
+                status: "construction",
+                scale: "870 km • 249 km/h",
+                desc: "Greenfield European standard-gauge electrified railway under construction linking the Baltic states to Warsaw.",
+                url: "https://en.wikipedia.org/wiki/Rail_Baltica",
+                dx: 48,
+                dy: -22
+            },
+
+            // --- AFRICA & MIDDLE EAST (MENA & SUB-SAHARAN AFRICA) ---
+            {
+                id: "morocco",
+                shortLabel: "Morocco Al Boraq",
+                name: "Al Boraq HSR & Kenitra–Marrakesh Extension",
+                country: "Morocco",
+                lat: 34.02,
+                lon: -6.83,
+                status: "operational",
+                scale: "323 km Operational + 430 km Extension • 320 km/h",
+                desc: "Africa's first operational high-speed bullet train (Tangier–Casablanca), with southern expansion to Marrakesh underway.",
+                url: "https://en.wikipedia.org/wiki/Al_Boraq",
+                dx: -64,
+                dy: 16
+            },
+            {
+                id: "egypt",
+                shortLabel: "Egypt HSR",
+                name: "Egyptian High-Speed Electrified Rail Network",
+                country: "Egypt",
+                lat: 30.04,
+                lon: 31.23,
+                status: "construction",
+                scale: "2,000 km (3 Lines) • 230 km/h",
+                desc: "Multi-line Siemens Velaro electrified rail network under construction linking the Red Sea, Nile Valley, and Mediterranean.",
+                url: "https://en.wikipedia.org/wiki/High-speed_rail_in_Egypt",
+                dx: -46,
+                dy: -16
+            },
+            {
+                id: "nigeria",
+                shortLabel: "Nigeria Lagos–Kano SGR",
+                name: "Lagos–Kano Standard Gauge Railway",
+                country: "Nigeria",
+                lat: 9.07,
+                lon: 7.40,
+                status: "construction",
+                scale: "1,124 km National Trunk • Standard Gauge",
+                desc: "Lagos–Ibadan and Abuja–Kaduna segments operational, with northern Kaduna–Kano–Maradi phases under construction.",
+                url: "https://en.wikipedia.org/wiki/Lagos%E2%80%93Kano_Standard_Gauge_Railway",
+                dx: -62,
+                dy: 18
+            },
+            {
+                id: "tanzania",
+                shortLabel: "Tanzania SGR",
+                name: "Tanzania Standard Gauge Railway (Dar–Dodoma–Mwanza)",
+                country: "Tanzania",
+                lat: -6.16,
+                lon: 35.75,
+                status: "operational",
+                scale: "1,219 km Network • 160 km/h Electrified",
+                desc: "East Africa's first electrified 160 km/h standard-gauge railway; Dar es Salaam–Dodoma inaugurated in 2024.",
+                url: "https://en.wikipedia.org/wiki/Tanzania_Standard_Gauge_Railway",
+                dx: 54,
+                dy: 16
+            },
+            {
+                id: "gulf",
+                shortLabel: "Gulf Railway (SA–QA)",
+                name: "Gulf Railway & Saudi–Qatar High-Speed Link",
+                country: "GCC (Saudi Arabia • Qatar • UAE)",
+                lat: 25.28,
+                lon: 50.10,
+                status: "contracted",
+                scale: "2,177 km GCC Spine • 220–300 km/h",
+                desc: "Approved trans-Arabian cross-border passenger and freight rail link connecting Riyadh, Doha, and Dammam.",
+                url: "https://en.wikipedia.org/wiki/Gulf_Railway",
+                dx: 56,
+                dy: 18
+            },
+            {
+                id: "turkey",
+                shortLabel: "Turkey HSR",
+                name: "Ankara–Sivas & Halkalı–Kapıkule High-Speed Rail",
+                country: "Turkey",
+                lat: 39.93,
+                lon: 32.85,
+                status: "construction",
+                scale: "500+ km Corridors • 250 km/h",
+                desc: "Anatolian and European-border high-speed rail expansion connecting Istanbul and Ankara toward Bulgaria and Izmir.",
+                url: "https://en.wikipedia.org/wiki/High-speed_rail_in_Turkey",
+                dx: 50,
+                dy: -12
+            },
+
+            // --- ASIA ---
+            {
+                id: "india",
+                shortLabel: "Mumbai–Ahmedabad HSR",
+                name: "Mumbai–Ahmedabad High-Speed Rail Corridor",
+                country: "India",
+                lat: 21.17,
+                lon: 72.83,
+                status: "construction",
+                scale: "508 km • 320 km/h (Shinkansen E5 Tech)",
+                desc: "JICA-financed elevated bullet train corridor under intensive civil construction across Gujarat and Maharashtra.",
+                url: "https://en.wikipedia.org/wiki/Mumbai%E2%80%93Ahmedabad_high-speed_rail_corridor",
+                dx: -54,
+                dy: 24
+            },
+            {
+                id: "thailand",
+                shortLabel: "Bangkok–Nong Khai HSR",
+                name: "Bangkok–Nong Khai High-Speed Railway",
+                country: "Thailand",
+                lat: 14.97,
+                lon: 102.08,
+                status: "construction",
+                scale: "609 km • 250 km/h",
+                desc: "Under-construction Pan-Asian rail spine linking Bangkok via Nakhon Ratchasima to the Laos–China railway.",
+                url: "https://en.wikipedia.org/wiki/Bangkok%E2%80%93Nong_Khai_high-speed_railway",
+                dx: -62,
+                dy: 10
+            },
+            {
+                id: "vietnam",
+                shortLabel: "Vietnam N–S HSR",
+                name: "North–South Express Railway (Hanoi–HCMC)",
+                country: "Vietnam",
+                lat: 16.05,
+                lon: 108.20,
+                status: "contracted",
+                scale: "1,541 km • 350 km/h",
+                desc: "US$67B national high-speed trunk line officially ratified by the Vietnamese National Assembly in November 2024.",
+                url: "https://en.wikipedia.org/wiki/North%E2%80%93South_express_railway_(Vietnam)",
+                dx: 62,
+                dy: 4
+            },
+            {
+                id: "indonesia",
+                shortLabel: "Indonesia Whoosh",
+                name: "Whoosh (Jakarta–Bandung High-Speed Rail)",
+                country: "Indonesia",
+                lat: -6.56,
+                lon: 107.44,
+                status: "operational",
+                scale: "142.3 km • 350 km/h",
+                desc: "Southeast Asia's first operational high-speed bullet train corridor, inaugurated in October 2023.",
+                url: "https://en.wikipedia.org/wiki/Whoosh_(train)",
+                dx: -52,
+                dy: 24
+            },
+            {
+                id: "china",
+                shortLabel: "China 8V8H HSR",
+                name: "Eight Vertical & Eight Horizontal High-Speed Network",
+                country: "China",
+                lat: 31.23,
+                lon: 118.79,
+                status: "operational",
+                scale: "45,000+ km National Grid • 350 km/h",
+                desc: "World's largest operational high-speed rail network with ongoing next-generation CR450 corridor upgrades.",
+                url: "https://en.wikipedia.org/wiki/High-speed_rail_in_China",
+                dx: -56,
+                dy: -16
+            },
+            {
+                id: "hokuriku",
+                shortLabel: "★ Echizen-Takefu (Hokuriku)",
+                name: "Hokuriku Shinkansen (Kanazawa–Tsuruga Extension)",
+                country: "Japan (Thesis Case Study)",
+                lat: 35.89,
+                lon: 136.20,
+                status: "operational",
+                isThesis: true,
+                scale: "125 km Extension (Inaugurated 2024) • 260 km/h",
+                desc: "Primary GPSS Thesis Case Study: 2015–2025 greenfield station expansion over agricultural land with Michi-no-Eki retention basin.",
+                url: "https://en.wikipedia.org/wiki/Hokuriku_Shinkansen",
+                dx: -68,
+                dy: -34
+            },
+            {
+                id: "chuo",
+                shortLabel: "Chūō Maglev",
+                name: "Chūō Shinkansen (SCMaglev Tokyo–Nagoya–Osaka)",
+                country: "Japan",
+                lat: 35.50,
+                lon: 138.50,
+                status: "construction",
+                scale: "286 km (Phase 1) • 505 km/h",
+                desc: "Superconducting maglev line under active construction (86% deep mountain and urban tunnels).",
+                url: "https://en.wikipedia.org/wiki/Ch%C5%AB%C5%8D_Shinkansen",
+                dx: 56,
+                dy: -12
+            },
+
+            // --- AUSTRALIA / OCEANIA ---
+            {
+                id: "aus_inland",
+                shortLabel: "Australia Inland Rail",
+                name: "Inland Rail (Melbourne–Brisbane Corridor)",
+                country: "Australia",
+                lat: -31.09,
+                lon: 150.93,
+                status: "construction",
+                scale: "1,600 km Fast Freight & Regional Spine",
+                desc: "Federal greenfield and upgraded rail megaproject across Victoria, NSW, and Queensland under active construction.",
+                url: "https://en.wikipedia.org/wiki/Inland_Rail",
+                dx: 62,
+                dy: -16
+            },
+            {
+                id: "aus_srl",
+                shortLabel: "Melbourne SRL East",
+                name: "Suburban Rail Loop (SRL East & Airport Rail)",
+                country: "Australia",
+                lat: -37.81,
+                lon: 144.96,
+                status: "construction",
+                scale: "90 km Orbital Automated Twin-Tunnel Rail",
+                desc: "Victoria's largest transit-oriented orbital rail infrastructure project currently under construction in Melbourne.",
+                url: "https://en.wikipedia.org/wiki/Suburban_Rail_Loop",
+                dx: -62,
+                dy: 22
+            }
+        ];
+
+        // ============================================================================
+        // 2. EQUIRECTANGULAR PROJECTION & ZERO-API-KEY WORLD MAP RENDERER
+        // ============================================================================
+        const SVG_WIDTH = 1200;
+        const SVG_HEIGHT = 600;
+        let currentFilter = "all";
+
+        // Equirectangular projection centered smoothly on major landmasses
+        const projection = d3.geoEquirectangular()
+            .scale(SVG_WIDTH / (2 * Math.PI))
+            .translate([SVG_WIDTH / 2, SVG_HEIGHT / 2 + 25]);
+
+        const geoPath = d3.geoPath().projection(projection);
+
+        // Built-in instant fallback continental polygons (in case offline)
+        const FALLBACK_CONTINENTS = [
+            // North America
+            "M 75,95 L 185,75 L 315,95 L 365,165 L 305,235 L 275,265 L 240,245 L 195,190 L 140,145 Z",
+            // South America
+            "M 310,275 L 395,295 L 430,360 L 385,485 L 345,510 L 325,415 L 295,335 Z",
+            // Eurasia
+            "M 555,105 L 675,75 L 895,70 L 1065,105 L 1045,215 L 965,275 L 895,280 L 835,295 L 775,245 L 695,250 L 645,205 L 555,185 Z",
+            // Africa
+            "M 545,215 L 655,215 L 715,285 L 675,445 L 615,455 L 585,345 L 530,285 Z",
+            // Australia
+            "M 935,375 L 1045,370 L 1065,445 L 985,465 L 930,425 Z",
+            // Japan archipelago silhouette
+            "M 1045,185 L 1068,195 L 1055,222 L 1038,212 Z"
+        ];
+
+        function drawGraticules() {
+            const g = document.getElementById("graticule-layer");
+            const graticule = d3.geoGraticule().step([20, 20]);
+            const pathData = geoPath(graticule());
+
+            const gridPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            gridPath.setAttribute("d", pathData);
+            gridPath.setAttribute("fill", "none");
+            gridPath.setAttribute("stroke-width", "0.75");
+            gridPath.setAttribute("class", "graticule-line");
+            g.appendChild(gridPath);
+
+            // Equator highlight
+            const [eqX1, eqY] = projection([-180, 0]);
+            const [eqX2] = projection([180, 0]);
+            const eqLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            eqLine.setAttribute("x1", eqX1);
+            eqLine.setAttribute("y1", eqY);
+            eqLine.setAttribute("x2", eqX2);
+            eqLine.setAttribute("y2", eqY);
+            eqLine.setAttribute("stroke-dasharray", "4 4");
+            eqLine.setAttribute("stroke-width", "1");
+            eqLine.setAttribute("class", "equator-line");
+            g.appendChild(eqLine);
+        }
+
+        async function loadAndDrawWorldMap() {
+            const continentsLayer = document.getElementById("continents-layer");
+
+            // Draw instant fallback first so screen is never empty
+            FALLBACK_CONTINENTS.forEach(d => {
+                const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                p.setAttribute("d", d);
+                p.setAttribute("class", "land-path");
+                p.setAttribute("stroke-width", "1");
+                continentsLayer.appendChild(p);
+            });
+
+            try {
+                // Public-domain Natural Earth 110m countries via jsdelivr (No API key ever required)
+                const response = await fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json");
+                if (!response.ok) return;
+                const world = await response.json();
+                const countries = topojson.feature(world, world.objects.countries).features;
+
+                continentsLayer.innerHTML = "";
+                countries.forEach(feature => {
+                    // Skip Antarctica for cleaner railway focus
+                    if (feature.id === "010" || feature.properties?.name === "Antarctica") return;
+                    const d = geoPath(feature);
+                    if (!d) return;
+                    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                    path.setAttribute("d", d);
+                    path.setAttribute("class", "land-path");
+                    path.setAttribute("stroke-width", "0.65");
+                    continentsLayer.appendChild(path);
+                });
+            } catch (err) {
+                // Keeps clean inline fallback if offline
+            }
+        }
+
+        // ============================================================================
+        // 3. RENDER PINS, LEADER LINES, & CLICKABLE CALLOUT PILLS ON STATIC SVG
+        // ============================================================================
+        function getStatusMeta(project, isDark) {
+            if (project.isThesis) {
+                return {
+                    label: "Thesis Case Study • Operational",
+                    dotFill: "#ef4444",        // Crimson
+                    dotStroke: "#fbbf24",      // Gold ring
+                    pillBg: isDark ? "#7f1d1d" : "#fef2f2",
+                    pillStroke: "#ef4444",
+                    textFill: isDark ? "#fff1f2" : "#991b1b",
+                    badgeClass: "bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30"
+                };
+            }
+            if (project.status === "operational") {
+                return {
+                    label: "Operational / Active",
+                    dotFill: "#10b981",        // Green
+                    dotStroke: "#ffffff",
+                    pillBg: isDark ? "#064e3b" : "#ecfdf5",
+                    pillStroke: "#10b981",
+                    textFill: isDark ? "#ecfdf5" : "#065f46",
+                    badgeClass: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                };
+            }
+            if (project.status === "construction") {
+                return {
+                    label: "Under Construction",
+                    dotFill: "#eab308",        // Yellow / Amber
+                    dotStroke: isDark ? "#0f172a" : "#ffffff",
+                    pillBg: isDark ? "#422006" : "#fefce8",
+                    pillStroke: "#eab308",
+                    textFill: isDark ? "#fef9c3" : "#854d0e",
+                    badgeClass: "bg-yellow-500/15 text-amber-700 dark:text-yellow-300 border border-yellow-500/30"
+                };
+            }
+            // "contracted" -> Crisp White
+            return {
+                label: "Contracted / Approved",
+                dotFill: isDark ? "#ffffff" : "#f8fafc",
+                dotStroke: "#334155",
+                pillBg: isDark ? "#1e293b" : "#ffffff",
+                pillStroke: isDark ? "#ffffff" : "#475569",
+                textFill: isDark ? "#ffffff" : "#0f172a",
+                badgeClass: "bg-slate-200 dark:bg-white/15 text-slate-800 dark:text-white border border-slate-400 dark:border-white/40"
+            };
+        }
+
+        function renderPinsAndBadges() {
+            const leadersLayer = document.getElementById("leaders-layer");
+            const dotsLayer = document.getElementById("dots-layer");
+            const labelsLayer = document.getElementById("labels-layer");
+            const badgeGrid = document.getElementById("badge-grid");
+            const isDark = document.documentElement.classList.contains("dark");
+
+            leadersLayer.innerHTML = "";
+            dotsLayer.innerHTML = "";
+            labelsLayer.innerHTML = "";
+            badgeGrid.innerHTML = "";
+
+            const visibleProjects = PROJECTS.filter(p => currentFilter === "all" || p.status === currentFilter);
+            document.getElementById("active-status").textContent =
+                `Showing ${visibleProjects.length} of ${PROJECTS.length} verified railway megaprojects`;
+
+            visibleProjects.forEach(project => {
+                const [cx, cy] = projection([project.lon, project.lat]);
+                const lx = cx + project.dx;
+                const ly = cy + project.dy;
+                const meta = getStatusMeta(project, isDark);
+
+                // 1. Leader Line from exact coordinate to callout pill
+                const leader = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                leader.setAttribute("x1", cx);
+                leader.setAttribute("y1", cy);
+                leader.setAttribute("x2", lx);
+                leader.setAttribute("y2", ly);
+                leader.setAttribute("stroke", meta.pillStroke);
+                leader.setAttribute("stroke-width", project.isThesis ? "1.7" : "1.15");
+                leader.setAttribute("stroke-opacity", "0.82");
+                leadersLayer.appendChild(leader);
+
+                // 2. Exact Geographic Coordinate Pin Dot
+                const dotGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                dotGroup.setAttribute("class", "pin-group");
+
+                const pulse = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                pulse.setAttribute("cx", cx);
+                pulse.setAttribute("cy", cy);
+                pulse.setAttribute("r", project.isThesis ? "7.5" : "5");
+                pulse.setAttribute("fill", meta.dotFill);
+                pulse.setAttribute("class", project.isThesis ? "pulse-ring-fast" : "pulse-ring");
+                dotGroup.appendChild(pulse);
+
+                const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                circle.setAttribute("cx", cx);
+                circle.setAttribute("cy", cy);
+                circle.setAttribute("r", project.isThesis ? "5.4" : "4.2");
+                circle.setAttribute("fill", meta.dotFill);
+                circle.setAttribute("stroke", meta.dotStroke);
+                circle.setAttribute("stroke-width", "1.6");
+                dotGroup.appendChild(circle);
+
+                attachInteractiveEvents(dotGroup, project);
+                dotsLayer.appendChild(dotGroup);
+
+                // 3. Callout Pin Bubble Pill
+                const labelGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                labelGroup.setAttribute("class", "pin-group");
+
+                const pillGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                pillGroup.setAttribute("class", "pin-badge");
+                pillGroup.setAttribute("filter", "url(#pillShadow)");
+
+                const charWidth = 5.4;
+                const pillWidth = Math.max(74, project.shortLabel.length * charWidth + 16);
+                const pillHeight = 18;
+
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                rect.setAttribute("x", lx - pillWidth / 2);
+                rect.setAttribute("y", ly - pillHeight / 2);
+                rect.setAttribute("width", pillWidth);
+                rect.setAttribute("height", pillHeight);
+                rect.setAttribute("rx", "5");
+                rect.setAttribute("fill", meta.pillBg);
+                rect.setAttribute("stroke", meta.pillStroke);
+                rect.setAttribute("stroke-width", project.isThesis ? "1.6" : "1.1");
+                pillGroup.appendChild(rect);
+
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", lx);
+                text.setAttribute("y", ly + 3.2);
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("fill", meta.textFill);
+                text.setAttribute("font-size", project.isThesis ? "9.2" : "8.6");
+                text.setAttribute("font-weight", "600");
+                text.setAttribute("font-family", "Inter, sans-serif");
+                text.textContent = project.shortLabel;
+                pillGroup.appendChild(text);
+
+                labelGroup.appendChild(pillGroup);
+                attachInteractiveEvents(labelGroup, project);
+                labelsLayer.appendChild(labelGroup);
+
+                // 4. Bottom Directory Quick-Link Card
+                const card = document.createElement("a");
+                card.href = project.url;
+                card.target = "_blank";
+                card.rel = "noopener noreferrer";
+
+                let dotIndicatorClass = "bg-white border border-slate-500";
+                if (project.isThesis) dotIndicatorClass = "bg-red-500 ring-2 ring-amber-400";
+                else if (project.status === "operational") dotIndicatorClass = "bg-emerald-500";
+                else if (project.status === "construction") dotIndicatorClass = "bg-yellow-400";
+
+                card.className = `group px-2.5 py-1.5 rounded-lg border text-left transition flex items-center justify-between gap-1.5 ${
+                    project.isThesis
+                        ? "bg-red-500/10 border-red-500/40 hover:bg-red-500/20"
+                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-emerald-500/60 dark:hover:border-emerald-500/60"
+                }`;
+                card.innerHTML = `
+                    <div class="truncate">
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-2 h-2 rounded-full shrink-0 ${dotIndicatorClass}"></span>
+                            <span class="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate">${project.country}</span>
+                        </div>
+                        <div class="text-xs font-semibold truncate text-slate-800 dark:text-slate-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 mt-0.5">
+                            ${project.shortLabel}
+                        </div>
+                    </div>
+                    <span class="text-xs text-slate-400 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition">↗</span>
+                `;
+                badgeGrid.appendChild(card);
+            });
+        }
+
+        // ============================================================================
+        // 4. HOVER TOOLTIP & DIRECT WIKIPEDIA CLICK NAVIGATION
+        // ============================================================================
+        const tooltip = document.getElementById("hover-tooltip");
+
+        function attachInteractiveEvents(svgElement, project) {
+            svgElement.addEventListener("mouseenter", (e) => {
+                const isDark = document.documentElement.classList.contains("dark");
+                const meta = getStatusMeta(project, isDark);
+
+                document.getElementById("tt-country").textContent = project.country;
+                const statusEl = document.getElementById("tt-status");
+                statusEl.textContent = meta.label;
+                statusEl.className = `text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${meta.badgeClass}`;
+
+                document.getElementById("tt-coords").textContent = `${project.lat.toFixed(1)}°, ${project.lon.toFixed(1)}°`;
+                document.getElementById("tt-title").textContent = project.name;
+                document.getElementById("tt-scale").textContent = project.scale;
+                document.getElementById("tt-desc").textContent = project.desc;
+                tooltip.classList.remove("hidden");
+                positionTooltip(e);
+            });
+
+            svgElement.addEventListener("mousemove", (e) => {
+                positionTooltip(e);
+            });
+
+            svgElement.addEventListener("mouseleave", () => {
+                tooltip.classList.add("hidden");
+            });
+
+            svgElement.addEventListener("click", () => {
+                window.open(project.url, "_blank", "noopener,noreferrer");
+            });
+        }
+
+        function positionTooltip(e) {
+            const pad = 16;
+            const rect = tooltip.getBoundingClientRect();
+            let left = e.clientX + pad;
+            let top = e.clientY + pad;
+
+            if (left + rect.width > window.innerWidth - 12) {
+                left = e.clientX - rect.width - pad;
+            }
+            if (top + rect.height > window.innerHeight - 12) {
+                top = e.clientY - rect.height - pad;
+            }
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${top}px`;
+        }
+
+        // ============================================================================
+        // 5. CONTROLS: THEME SWITCH, FILTERING, & CITATION EXPORT
+        // ============================================================================
+        function initControls() {
+            // Theme Toggle
+            document.getElementById("btn-theme").addEventListener("click", () => {
+                const html = document.documentElement;
+                html.classList.toggle("dark");
+                const isDark = html.classList.contains("dark");
+                document.getElementById("ocean-rect").setAttribute(
+                    "fill",
+                    isDark ? "url(#oceanGlowDark)" : "url(#oceanGlowLight)"
+                );
+                document.getElementById("theme-label").textContent = isDark ? "Print Light" : "Dark Mode";
+                renderPinsAndBadges();
+            });
+
+            // Filter Pills
+            document.querySelectorAll(".filter-pill").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    currentFilter = btn.getAttribute("data-filter");
+                    document.querySelectorAll(".filter-pill").forEach(b => {
+                        b.classList.remove("bg-white", "dark:bg-slate-900", "shadow-sm");
+                    });
+                    btn.classList.add("bg-white", "dark:bg-slate-900", "shadow-sm");
+                    renderPinsAndBadges();
+                });
+            });
+
+            // Citation Modal
+            const modal = document.getElementById("cite-modal");
+            const mdBox = document.getElementById("cite-markdown");
+            mdBox.value = PROJECTS.map(p => `- [${p.name} (${p.country})](${p.url}) — ${p.scale}`).join("\n");
+
+            document.getElementById("btn-open-cite").addEventListener("click", () => {
+                modal.classList.remove("hidden");
+                modal.classList.add("flex");
+            });
+            document.getElementById("btn-close-cite").addEventListener("click", () => {
+                modal.classList.add("hidden");
+                modal.classList.remove("flex");
+            });
+            modal.addEventListener("click", (e) => {
+                if (e.target === modal) {
+                    modal.classList.add("hidden");
+                    modal.classList.remove("flex");
+                }
+            });
+
+            document.getElementById("btn-copy-prose").addEventListener("click", () => {
+                copyText(document.getElementById("cite-prose").innerText.trim());
+            });
+            document.getElementById("btn-copy-md").addEventListener("click", () => {
+                copyText(mdBox.value);
+            });
+        }
+
+        function copyText(str) {
+            const area = document.createElement("textarea");
+            area.value = str;
+            document.body.appendChild(area);
+            area.select();
+            document.execCommand("copy");
+            document.body.removeChild(area);
+
+            const toast = document.getElementById("copy-toast");
+            toast.classList.remove("hidden");
+            setTimeout(() => toast.classList.add("hidden"), 2000);
+        }
+
+        window.onload = function () {
+            drawGraticules();
+            loadAndDrawWorldMap();
+            renderPinsAndBadges();
+            initControls();
+        };
+    </script>
+</body>
+</html>
